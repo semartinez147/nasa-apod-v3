@@ -29,7 +29,6 @@ public class MainViewModel extends AndroidViewModel implements LifecycleObserver
 
   public MainViewModel(@NonNull Application application) {
     super(application);
-    ApodRepository.setContext(application);
     repository = ApodRepository.getInstance();
     apod = new MutableLiveData<>();
     throwable = new MutableLiveData<>();
@@ -60,19 +59,25 @@ public class MainViewModel extends AndroidViewModel implements LifecycleObserver
     throwable.setValue(null);
     pending.add(
         repository.get(date)
-            .doOnSuccess(apod::postValue)
-            .doOnError(throwable::postValue)
-            .subscribe()
+            .subscribe(
+                apod::postValue,
+                throwable::postValue
+            )
     );
   }
 
-public void getImage(@NonNull Apod apod, @NonNull Consumer<String> pathConsumer) {
+  public void getImage(@NonNull Apod apod, @NonNull Consumer<String> pathConsumer) {
     throwable.setValue(null);
-  repository.getImage(apod)
-      .doOnSuccess(pathConsumer)
-      .doOnError(throwable::postValue)
-      .subscribe();
-}
+    pending.add(
+        repository.getImage(apod)
+            // Consume result on main thread, since pathConsumer will probably "touch" the UI.
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                pathConsumer,
+                throwable::setValue
+            )
+    );
+  }
 
   @SuppressWarnings("unused")
   @OnLifecycleEvent(Event.ON_STOP)

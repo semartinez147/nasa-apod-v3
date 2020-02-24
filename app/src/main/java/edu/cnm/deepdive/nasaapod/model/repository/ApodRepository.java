@@ -1,8 +1,10 @@
 package edu.cnm.deepdive.nasaapod.model.repository;
 
+import android.annotation.SuppressLint;
 import android.app.Application;
 import android.os.Environment;
 import androidx.annotation.NonNull;
+import androidx.core.app.JobIntentService;
 import androidx.lifecycle.LiveData;
 import edu.cnm.deepdive.nasaapod.BuildConfig;
 import edu.cnm.deepdive.nasaapod.model.dao.AccessDao;
@@ -13,29 +15,35 @@ import edu.cnm.deepdive.nasaapod.model.entity.Apod.MediaType;
 import edu.cnm.deepdive.nasaapod.model.pojo.ApodWithStats;
 import edu.cnm.deepdive.nasaapod.service.ApodDatabase;
 import edu.cnm.deepdive.nasaapod.service.ApodService;
+import io.reactivex.Maybe;
 import io.reactivex.Single;
 import io.reactivex.SingleSource;
 import io.reactivex.schedulers.Schedulers;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.annotation.Nonnull;
+import okhttp3.ResponseBody;
 
 public class ApodRepository {
 
   private static final int NETWORK_THREAD_COUNT = 10;
+  private static final Pattern URL_FILENAME_PATTERN =
+      Pattern.compile("^.*/([^/#?]+)(?:\\?.*)?(?:#.*)?$");
+  private static final String LOCAL_FILENAME_FORMAT = "%1$tY%1$tm%1$td-%2$s";
 
   private final ApodDatabase database;
   private final ApodService nasa;
   private final Executor networkPool;
 
   private static Application context;
-  private static final Pattern URL_FILENAME_PATTERN = Pattern.compile("^.*/([^/#?]+)(?:\\?.*)?(?:#.*)?$");
-  public static final String  LOCAL_FILENAME_FORMAT = "%1$tY%1$tm%1$td-%2$s";
 
   private ApodRepository() {
     if (context == null) {
@@ -79,18 +87,47 @@ public class ApodRepository {
 
   public Single<String> getImage(@NonNull Apod apod) {
     // TODO Add local file download & reference.
-    // TODO define a maybe task that looks for a local file and downloads it if there isn't one.
     boolean canBeLocal = (apod.getMediaType() == MediaType.IMAGE);
     File file = canBeLocal ? getFile(apod) : null;
-    return Single.fromCallable(apod::getUrl);
+    return Maybe.fromCallable(() ->
+        canBeLocal ? (file.exists() ? file.toURI().toString() : null) : apod.getUrl())
+        .switchIfEmpty((SingleSource<String>) (observer) ->
+            nasa.getFile(apod.getUrl())
+                .map((body) -> {
+                  try {
+                    return download(body, file);
+                  } catch (IOException ex) {
+                    return apod.getUrl();
+                  }
+                })
+                .subscribeOn(Schedulers.from(networkPool))
+                .subscribe(observer)
+        );
   }
 
-  // a file Object has no content, it just points to a location
-  private File getFile(@Nonnull Apod apod) {
+  private String download(ResponseBody body, File file) throws IOException {
+    try (
+        InputStream input = body.byteStream();
+        OutputStream output = new FileOutputStream(file);
+    ) {
+      byte[] buffer = new byte[16_384];
+      int bytesRead;
+      do {
+        if ((bytesRead = input.read(buffer)) > 0) {
+          output.write(buffer, 0, bytesRead);
+        }
+      } while (bytesRead >= 0);
+      output.flush();
+      return file.toURI().toString();
+    }
+  }
+
+  private File getFile(@NonNull Apod apod) {
     String url = apod.getUrl();
-    File file= null;
+    File file = null;
     Matcher matcher = URL_FILENAME_PATTERN.matcher(url);
     if (matcher.matches()) {
+      @SuppressLint("DefaultLocale")
       String filename = String.format(LOCAL_FILENAME_FORMAT, apod.getDate(), matcher.group(1));
       File directory = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
       if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState(directory))) {
