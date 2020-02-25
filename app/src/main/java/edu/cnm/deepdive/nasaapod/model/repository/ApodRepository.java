@@ -8,7 +8,7 @@ import android.net.Uri;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.os.Environment;
-import android.provider.MediaStore.Audio.Media;
+import android.provider.MediaStore.Images.Media;
 import android.provider.MediaStore.MediaColumns;
 import android.webkit.MimeTypeMap;
 import androidx.annotation.NonNull;
@@ -38,7 +38,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.annotation.Nonnull;
 import okhttp3.ResponseBody;
 
 public class ApodRepository {
@@ -48,6 +47,7 @@ public class ApodRepository {
       Pattern.compile("^.*/([^/#?]+)(?:\\?.*)?(?:#.*)?$");
   private static final String LOCAL_FILENAME_FORMAT = "%1$tY%1$tm%1$td-%2$s";
   private static final String MEDIA_RECORD_FAILURE = "Unable to create MediaStore record";
+  private static final int BUFFER_SIZE = 16_384;
 
   private final ApodDatabase database;
   private final ApodService nasa;
@@ -96,7 +96,6 @@ public class ApodRepository {
   }
 
   public Single<String> getImage(@NonNull Apod apod) {
-    // TODO Add local file download & reference.
     boolean canBeLocal = (apod.getMediaType() == MediaType.IMAGE);
     File file = canBeLocal ? getFile(apod) : null;
     return Maybe.fromCallable(() ->
@@ -105,7 +104,7 @@ public class ApodRepository {
             nasa.getFile(apod.getUrl())
                 .map((body) -> {
                   try {
-                    return download(body, file);
+                    return downloadCache(body, file);
                   } catch (IOException ex) {
                     return apod.getUrl();
                   }
@@ -128,19 +127,19 @@ public class ApodRepository {
           try (
               InputStream input = body.byteStream();
               OutputStream output = resolver.openOutputStream(uri);
-              ) {
-            copy (input, output);
+          ) {
+            copy(input, output);
           } catch (IOException ex) {
             resolver.delete(uri, null, null);
-            // TODO throw new exception?
+            throw ex;
           }
           return true;
         })
         .ignoreElement();
   }
 
-  private Uri getMediaUri(@Nonnull ContentResolver resolver, @Nonnull String sourceUrl,
-      @Nonnull String title) throws IOException {
+  private Uri getMediaUri(@NonNull ContentResolver resolver, @NonNull String sourceUrl,
+      @NonNull String title) throws IOException {
     String extension = MimeTypeMap.getFileExtensionFromUrl(sourceUrl);
     MimeTypeMap map = MimeTypeMap.getSingleton();
     String mimeType = map.getMimeTypeFromExtension(extension);
@@ -158,7 +157,7 @@ public class ApodRepository {
   }
 
   private long copy(InputStream input, OutputStream output) throws IOException {
-    byte[] buffer = new byte[16_384];
+    byte[] buffer = new byte[BUFFER_SIZE];
     long totalBytes = 0;
     int bytesRead;
     do {
@@ -167,22 +166,16 @@ public class ApodRepository {
         totalBytes += bytesRead;
       }
     } while (bytesRead >= 0);
+    output.flush();
     return totalBytes;
   }
 
-  private String download(ResponseBody body, File file) throws IOException {
+  private String downloadCache(ResponseBody body, File file) throws IOException {
     try (
         InputStream input = body.byteStream();
         OutputStream output = new FileOutputStream(file);
     ) {
-      byte[] buffer = new byte[16_384];
-      int bytesRead;
-      do {
-        if ((bytesRead = input.read(buffer)) > 0) {
-          output.write(buffer, 0, bytesRead);
-        }
-      } while (bytesRead >= 0);
-      output.flush();
+      copy(input, output);
       return file.toURI().toString();
     }
   }
