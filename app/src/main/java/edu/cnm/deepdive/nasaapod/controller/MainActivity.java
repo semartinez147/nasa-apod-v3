@@ -1,6 +1,8 @@
 package edu.cnm.deepdive.nasaapod.controller;
 
+import android.Manifest.permission;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.Menu;
@@ -10,6 +12,8 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.NavController;
 import androidx.navigation.NavOptions;
@@ -25,9 +29,12 @@ import edu.cnm.deepdive.nasaapod.service.GoogleSignInRepository;
 import edu.cnm.deepdive.nasaapod.viewmodel.MainViewModel;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.LinkedList;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
+  private static final int EXTERNAL_STORAGE_REQUEST_CODE = 3262;
   private MainViewModel viewModel;
   private NavController navController;
   private ProgressBar loading;
@@ -43,6 +50,7 @@ public class MainActivity extends AppCompatActivity {
     setupNavigation();
     setupViewModel();
     setupCalendarPicker();
+    checkPermissions(permission.READ_EXTERNAL_STORAGE, permission.WRITE_EXTERNAL_STORAGE);
   }
 
   @Override
@@ -69,6 +77,24 @@ public class MainActivity extends AppCompatActivity {
         handled = super.onOptionsItemSelected(item);
     }
     return handled;
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+      @NonNull int[] grantResults) {
+    if (requestCode == EXTERNAL_STORAGE_REQUEST_CODE) {
+      for (int i = 0; i < permissions.length; i++) {
+        String permission = permissions[i];
+        int result = grantResults[i];
+        if (result == PackageManager.PERMISSION_GRANTED) {
+         viewModel.grantPermission(permission);
+        } else {
+          viewModel.revokePermission(permission);
+        }
+      }
+    } else {
+      super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
   }
 
   public void loadApod(Date date) {
@@ -135,6 +161,29 @@ public class MainActivity extends AppCompatActivity {
       navController.navigate(itemId, null, navOptions);
       if (navigator.getSelectedItemId() != itemId) {
         navigator.setSelectedItemId(itemId);
+      }
+    }
+  }
+
+  private void checkPermissions(String... permissions) {
+    List<String> permissionsToRequest = new LinkedList<>();
+    List<String> permissionsToExplain = new LinkedList<>();
+    for (String permission : permissions) {
+      if (ContextCompat.checkSelfPermission(this, permission)
+          != PackageManager.PERMISSION_GRANTED) {
+        permissionsToRequest.add(permission);
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this, permission)) {
+          permissionsToExplain.add(permission);
+        } else {
+          viewModel.grantPermission(permission);
+        }
+      }
+      if (!permissionsToExplain.isEmpty()) {
+        // TODO explain to user.
+      }
+      if (!permissionsToRequest.isEmpty()) {
+        ActivityCompat.requestPermissions(this, permissionsToRequest.toArray(new String[0]),
+            EXTERNAL_STORAGE_REQUEST_CODE);
       }
     }
   }

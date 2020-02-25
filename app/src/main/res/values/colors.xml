@@ -2,7 +2,7 @@
 <resources>
   <color name="colorPrimary">#4F2DA4  </color>
   <color name="colorPrimaryDark">#101080</color>
-  <color name="colorAccent">#f2ef93</color>
+  <color name="colorAccent">#3482db</color>
   <color name="launcherBackground">#101080</color>
   <color name="historyListBackground">#9f91fc</color>
 </resources>
